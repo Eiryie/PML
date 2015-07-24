@@ -1,0 +1,96 @@
+# Practical Machine Learning Course Project
+Eiryie  
+July 2015
+
+## Project Purpose
+The goal of this project is to develop a model in R able to accurately predict the manner in which test subjects performed a weight-lifting exercise. 
+
+## Project Data
+The training and test sets were created and provided by the course administrators.  The data is the result of six young health participants who were asked to perform one set of 10 repetitions of the Unilateral Dumbbell Biceps Curl in five different fashions: exactly according to the specification (Class A), throwing the elbows to the front (Class B), lifting the dumbbell only halfway (Class C), lowering the dumbbell only halfway (Class D) and throwing the hips to the front (Class E). A full description is available at: http://groupware.les.inf.puc-rio.br/har#ixzz3gdYKUKYc.  
+
+A cursory review of the training and test sets show that there are several fields with null values. Therefore, these should be addressed when loading the data.  
+```{r results='hide'}
+## Load the required packages
+library(caret)
+library(rpart)
+library(rpart.plot)
+library(randomForest)
+library(doParallel)
+registerDoParallel(cores=2)
+
+## Load datasets
+test<-read.csv("~/RDirect/pml-testing.csv", na.strings=c("NA","#DIV/0!", ""),header=TRUE)
+train<-read.csv("~/RDirect/pml-training.csv", na.strings=c("NA","#DIV/0!", ""),header=TRUE)
+```
+
+## Data Cleaning
+A preliminary review of the training and test sets show that there are 19622 observations of 160 variables in the training set and 20 observations of 160 variables in the test set.  It is important to note that column 160 in the sets are different. The training set includes the exercise fashion (classe).  The test set includes a column for the project id.  
+
+Columns reflecting only descriptive data on the observation (e.g., subject name) will not be useful for this model.  Therefore, they can be removed.
+```{r}
+trainc<-train[-c(1:7)]
+testc<-test[-c(1:7)]
+```
+
+Several columns consist primarily of null values. The lack of data in these columns means that they will not be useful as predictors. Therefore, they can also be dropped. This leaves us with 53 columns in each set.
+```{r results='hide'}
+## Identify columns that have at least 50% null values
+na_count <- sapply(trainc, function(y) sum(length(which(is.na(y)))))
+na_count <- data.frame(na_count)
+na_count2 <- data.frame(column=row.names(na_count), na_count)
+exclude <- na_count2[which(na_count2[,2]>=9811),]
+
+## Remove columns with at least 50% null values from the training and test sets
+trainc <- trainc[,!(names(trainc) %in% exclude$column)]
+testc <- testc[,!(names(testc) %in% exclude$column)]
+```
+
+A near-zero variance analysis confirms that the remaining columns should have some value for the predictive model.
+```{r}
+nsv <- nearZeroVar(trainc, saveMetrics=TRUE)
+nsv
+```
+
+## Model Design
+### Create a Partition
+In order to allow cross-validation, split the training set to have 60% of the original clean training data to be used for training the model and the other 40% to be used as the new testing set.
+```{r}
+set.seed(2000)
+intrain <- createDataPartition(trainc$classe, p=0.60, list=FALSE)
+subTrainc <- trainc[intrain, ] 
+subTestc <- trainc[-intrain, ]
+```
+
+### Basic Classification Tree
+We start with a basic prediction tree. However, we find this model only correctly predicts the classe variable about 50% of the time.
+```{r}
+## Run model
+modFit<-train(classe~.,method="rpart", data=subTrainc)
+modFit
+
+## Plot the final model
+rpart.plot(modFit$finalModel, main="Basic Classification Tree", extra=102)
+
+## Evaluate how well the model works on the partitioned training test set
+test1 <- predict(modFit, subTestc)
+confusionMatrix(test1, subTestc$classe)
+```
+
+### Random Forest
+In order to achieve a higher predictive success rate, we next try a random forest approach. Although this model takes over 12 hours to train even using parallel processing on a quad core/8GB RAM computer, the results are worth the wait. The random forest approach creates a model with an accuracy rate of over 99%.  
+```{r}
+## Run model
+modRF<-train(classe~.,method="rf", data=subTrainc, prox=TRUE)
+modRF
+
+## Evaluate how well the model works on the partitioned training test set  
+test2 <- predict(modRF, subTestc)
+confusionMatrix(test2, subTestc$classe)
+```
+
+## Test Set Prediction
+In order to complete the assignment, we apply the random forest model to the Test set originally provided by the course administrators. As shown in the confusion matrix cross-validation, the expected out-of-sample error for this prediction is 0.0076 (1-0.9924). Therefore, we expect less than 1% of the predicted values to be erroneous.
+```{r}
+answers <- predict(modRF, test)
+answers
+```
